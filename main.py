@@ -1,11 +1,10 @@
-from torch.utils.data import DataLoader
-from moses import CharVocab, StringDataset, get_dataset
+from transformers.models.bert.tokenization_bert import load_vocab
 
-train = get_dataset('train')
-vocab = CharVocab.from_data(train)
-train_dataset = StringDataset(vocab, train)
-train_dataloader = DataLoader(
-    train_dataset, batch_size=512,
-    shuffle=True, collate_fn=train_dataset.default_collate
-)
-print(vocab[0])
+from transformole import config
+from transformole.utils import data
+
+
+train = open(f'{config.DATA_PATH}/moses/train.csv').read().split('\n')
+tokenizer = data.SmilesTokenizer(load_vocab=True)
+train = tokenizer.encode(train)
+print(train["input_ids"][:5])
