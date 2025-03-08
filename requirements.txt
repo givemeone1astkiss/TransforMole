@@ -1,0 +1,10 @@
+torch~=2.2.0+cu121
+pytorch-lightning~=2.4.0
+transformers~=4.48.0
+guacamol~=0.5.2
+rdkit~=2023.9.6
+numpy~=1.26.4
+molsets~=1.0
+pandas~=2.2.3
+click~=8.1.7
+tqdm~=4.67.1
