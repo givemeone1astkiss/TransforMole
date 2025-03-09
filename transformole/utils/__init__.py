@@ -1,2 +1,2 @@
 from .data import *
-from .molecule import *
+from .train import *

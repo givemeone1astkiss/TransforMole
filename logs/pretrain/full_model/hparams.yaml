@@ -1,0 +1,10 @@
+d_model: 256
+dim_feedforward: 1024
+lora_alpha: 16
+lora_rank: 8
+lr: 0.0001
+nhead: 8
+num_layers: 6
+pad_idx: 0
+use_lora: false
+vocab_size: 100

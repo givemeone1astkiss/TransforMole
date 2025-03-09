@@ -1,10 +1,9 @@
-from transformers.models.bert.tokenization_bert import load_vocab
+from torch.cuda import is_available, device_count
+from torch import cuda, device
+import torch
 
-from transformole import config
-from transformole.utils import data
+print(is_available())
+print(device_count())
+print(device(f"cuda:{cuda.current_device()}"))
 
-
-train = open(f'{config.DATA_PATH}/moses/train.csv').read().split('\n')
-tokenizer = data.SmilesTokenizer(load_vocab=True)
-train = tokenizer.encode(train)
-print(train["input_ids"][:5])
+A = torch.tensor([1, 2, 3]).to(device(f"cuda:{cuda.current_device()}"))

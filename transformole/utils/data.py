@@ -1,4 +1,6 @@
 from typing import Tuple
+
+from tensorboard.plugins.pr_curve.summary import raw_data_op
 from torch.utils.data import Dataset, DataLoader
 from moses import get_dataset
 from pytorch_lightning import LightningDataModule
@@ -26,11 +28,11 @@ class SmilesDataset(Dataset):
         return len(self.smiles)
 
     def __getitem__(self, idx):
-        smile = self.smiles[idx]
+        smile = [self.smiles[idx]]
         encoding = self.tokenizer.encode(
             smile,
             max_length=self.max_length,
-            padding="max_length",
+            padding=True,
             truncation=True,
             return_tensors="pt",
         )
@@ -100,8 +102,8 @@ class SmilesDataModule(LightningDataModule):
         Initialize DataModule from Moses datasets
         :return: SmilesDataModule instance
         """
-        train = open(f"{data_path}/moses/train.csv").read().split("\n")
-        valid = open(f"{data_path}/moses/valid.csv").read().split("\n")
+        train = open(f"{data_path}/moses/train.csv").read().split("\n")[:-5000]
+        valid = open(f"{data_path}/moses/valid.csv").read().split("\n")[5000:-1]
         test = open(f"{data_path}/moses/test.csv").read().split("\n")
         return cls(raw_data=(train, valid, test))
 
@@ -147,11 +149,11 @@ class SmilesDataModule(LightningDataModule):
         """
         # Load raw data
         if stage == "fit" or stage is None:
-            self.train_data = process_data(self.train_data, augment=self.augment)
-            self.valid_data = process_data(self.valid_data)
+            self.train_data = process_data(self.raw_data[0], augment=self.augment)
+            self.valid_data = process_data(self.raw_data[1])
         elif stage == "test" or stage is None:
             self.test_data = SmilesDataset(
-                self.test_data, self.tokenizer, max_length=self.max_seq_len
+                self.raw_data[2], self.tokenizer, max_length=self.max_seq_len
             )
         else:
             raise ValueError(f"Invalid stage: {stage}")
@@ -183,13 +185,13 @@ def analyze_dataset(smiles_list: list) -> tuple:
     :param smiles_list: list of SMILES strings
     :return: tuple of average length, std, max, min, and atom types distribution
     """
-    lengths = [len(s) for s in smiles_list]
+    lengths = [len(s) for s in tqdm(smiles_list, desc="Analyzing lengths")]
     print(f"Average length: {np.mean(lengths):.2f} ± {np.std(lengths):.2f}")
     print(f"Max length: {max(lengths)}")
     print(f"Min length: {min(lengths)}")
 
     atoms = []
-    for s in smiles_list:
+    for s in tqdm(smiles_list, desc="Analyzing atom types"):
         mol = Chem.MolFromSmiles(s)
         if mol:
             atoms.extend([a.GetSymbol() for a in mol.GetAtoms()])
@@ -308,7 +310,6 @@ class SmilesTokenizer:
 
         self.vocab = {token: idx for idx, token in enumerate(vocab_list)}
         self.inverse_vocab = {idx: token for idx, token in enumerate(vocab_list)}
-
         # Print summary
         actual_coverage = (
             sum(count for token, count in sorted_tokens[:cutoff]) / total_count
@@ -347,18 +348,25 @@ class SmilesTokenizer:
         print('Vocabulary loaded successfully.')
 
     def _tokenize(self, smile):
-        print("Tokenizing SMILES...")
         return [token for token in self._regex.findall(smile) if token]
 
-    def encode(self, smiles_list, max_length=None):
+    def encode(self, smiles_list, max_length, padding, truncation, return_tensors):
         """
         Encode SMILES strings.
+        :param padding: Whether to pad sequences.
+        :param truncation: Whether to truncate sequences.
         :param self: SmilesTokenizer object.
         :param smiles_list: SMILES strings to be encoded.
         :param max_length: Maximum length of the encoded sequences.
+        :param return_tensors: Whether to return PyTorch tensors.
         :return: Encoded sequences.
         """
         encoded = []
+        if truncation:
+            smiles_list = [smile[:max_length-2] for smile in smiles_list]
+        else:
+            smiles_list = [smile for smile in smiles_list if len(smile) <= max_length]
+
         for smile in tqdm(smiles_list, desc="Encoding SMILES"):
             tokens = ["<BOS>"] + self._tokenize(smile) + ["<EOS>"]
             ids = [self.vocab.get(token, self.vocab["<UNK>"]) for token in tokens]
@@ -370,17 +378,24 @@ class SmilesTokenizer:
         # Pad sequences.
         padded = []
         masks = []
-        for seq in encoded:
-            if len(seq) > max_len:
-                truncated = seq[:max_len]
-                mask = [1] * max_len
-            else:
-                truncated = seq + [self.vocab["<PAD>"]] * (max_len - len(seq))
+        if padding:
+            for seq in tqdm(encoded, desc="Padding sequences"):
+                padded_seq = seq + [self.vocab["<PAD>"]] * (max_len - len(seq))
                 mask = [1] * len(seq) + [0] * (max_len - len(seq))
-            padded.append(truncated)
-            masks.append(mask)
+                padded.append(padded_seq)
+                masks.append(mask)
+        else:
+            padded = encoded
+            masks = [[1] * len(seq) for seq in encoded]
 
-        return {
-            "input_ids": torch.tensor(padded, dtype=torch.long),
-            "attention_mask": torch.tensor(masks, dtype=torch.long),
-        }
+        # Tokenize sequences.
+        if return_tensors == "pt":
+            return (
+                torch.tensor(padded, dtype=torch.long).squeeze(),
+                torch.tensor(masks, dtype=torch.long).squeeze(),
+            )
+        else:
+            return (
+                np.array(padded),
+                np.array(masks),
+            )

@@ -1,4 +1,4 @@
-torch~=2.2.0+cu121
+torch~=2.6.0+cu126
 pytorch-lightning~=2.4.0
 transformers~=4.48.0
 guacamol~=0.5.2
