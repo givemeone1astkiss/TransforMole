@@ -1,154 +1,12 @@
 import os
-import torch
 import csv
-import math
 import pytorch_lightning as pl
-from torch import nn, Tensor
 from typing import Tuple, Optional
-
+import yaml
 from ..config import GEN_PATH
 from torch.nn import functional as F
-
-class PositionalEncoding(nn.Module):
-    """Transformer positional encoding module"""
-
-    def __init__(self, dim_model: int, max_len: int, device: torch.device):
-        super().__init__()
-        position = torch.arange(max_len).unsqueeze(1).to(device)
-        div_term = torch.exp(torch.arange(0, dim_model, 2) * (-math.log(10000.0) / dim_model)).to(device)
-        pe = torch.zeros(1, max_len, dim_model).to(device)
-        pe[0, :, 0::2] = torch.sin(position * div_term)
-        pe[0, :, 1::2] = torch.cos(position * div_term)
-        self.register_buffer('pe', pe)
-
-    def forward(self, x: Tensor) -> Tensor:
-        return x + self.pe[:, :x.size(1)]
-
-class RoPE(nn.Module):
-    """
-    Enhanced positional encoding combining multiple approaches
-
-    Features:
-    - Rotary Position Embedding (RoPE)
-    - Learnable frequency components
-    - Dynamic gating mechanism
-    - Relative position biases
-
-    Args:
-        dim_model: Dimension of the model embeddings
-        max_len: Maximum sequence length to handle
-        num_heads: Number of attention heads (for relative position)
-    """
-
-    def __init__(self, dim_model: int, max_len: int, num_heads: int, device: torch.device):
-        super().__init__()
-        self.attn_weights = None
-        self.dim_model = dim_model
-        self.num_heads = num_heads
-        self.device = device
-        # Rotary Position Embedding (RoPE) components
-        self.rope_freq = nn.Parameter(torch.randn(num_heads, dim_model // num_heads // 2)).to(device)
-        nn.init.normal_(self.rope_freq, mean=math.log(max_len) / 2, std=0.02)
-
-        # Learnable sinusoidal components
-        self.freq_weights = nn.Parameter(torch.randn(dim_model)).to(device)
-        self.phase_shift = nn.Parameter(torch.randn(dim_model)).to(device)
-
-        # Relative position bias table
-        self.rel_pos_bias = nn.Embedding(2 * max_len + 1, num_heads).to(device)
-
-        # Dynamic gating mechanism
-        self.gate_net = nn.Sequential(
-            nn.Linear(dim_model, 4 * dim_model, device=device),
-            nn.SiLU(),
-            nn.Linear(4 * dim_model, dim_model, device=device),
-            nn.Sigmoid()
-        )
-
-    def _apply_rope(self, x: Tensor) -> Tensor:
-        """Apply rotary position embedding to input tensor"""
-        batch_size, seq_len, _ = x.size()
-
-        # Reshape for rotary transformation
-        x_flat = x.view(batch_size, seq_len, self.num_heads, -1)
-        x_rot = x_flat.permute(0, 2, 1, 3)  # [B, H, T, D]
-
-        # Create rotation matrix
-        position = torch.arange(seq_len, device=x.device).view(1, 1, seq_len)
-        freq = torch.exp(self.rope_freq.view(1, self.num_heads, 1, -1) * position)
-        cos = torch.cos(freq)
-        sin = torch.sin(freq)
-
-        # Apply rotation
-        x1, x2 = x_rot.chunk(2, dim=-1)
-        rotated = torch.cat([x1 * cos - x2 * sin, x2 * cos + x1 * sin], dim=-1)
-        return rotated.permute(0, 2, 1, 3).reshape_as(x)
-
-    def _get_rel_pos_bias(self, seq_len: int) -> Tensor:
-        """Generate relative position bias matrix"""
-        context_pos = torch.arange(seq_len, device=self.rel_pos_bias.weight.device)[:, None]
-        memory_pos = torch.arange(seq_len, device=self.rel_pos_bias.weight.device)[None, :]
-        relative_pos = memory_pos - context_pos + seq_len  # Shift to positive indices
-        return self.rel_pos_bias(relative_pos).permute(2, 0, 1)  # [H, T, T]
-
-    def forward(self, x: Tensor) -> Tensor:
-        """Enhanced position-aware transformation
-
-        Returns:
-            Position-augmented tensor with shape [B, T, D]
-        """
-        seq_len = x.size(1)
-
-        # Base rotary encoding
-        rope_out = self._apply_rope(x)
-
-        # Learnable frequency modulation
-        position = torch.arange(seq_len, device=x.device).float()
-        freq_enc = torch.sin(position[:, None] * self.freq_weights + self.phase_shift)
-        freq_out = x * freq_enc[None, :, :]
-
-        # Dynamic gating
-        gate = self.gate_net(x)
-        combined = gate * rope_out + (1 - gate) * freq_out
-
-        # Add relative position biases to attention
-        if hasattr(self, 'attn_weights'):  # For attention integration
-            self.attn_weights += self._get_rel_pos_bias(seq_len)
-
-        return combined
-
-    def integrate_with_attention(self, attn_weights: Tensor) -> Tensor:
-        """Integrate relative position biases with attention matrix"""
-        self.attn_weights = attn_weights
-        return attn_weights
-
-class LoRALinear(nn.Module):
-    """Low-Rank Adaptation linear layer with dynamic rank management"""
-
-    def __init__(
-            self,
-            in_features: int,
-            out_features: int,
-            rank: int,
-            alpha: int,
-            device: torch.device,
-    ):
-        super().__init__()
-        self.linear = nn.Linear(in_features, out_features, device=device)
-        self.lora_A = nn.Parameter(torch.empty(rank, in_features)).to(device)
-        self.lora_B = nn.Parameter(torch.empty(out_features, rank)).to(device)
-        self.scaling = alpha / rank
-
-        nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
-        nn.init.zeros_(self.lora_B)
-
-        self.linear.weight.requires_grad_(False)
-        if self.linear.bias is not None:
-            self.linear.bias.requires_grad_(False)
-
-    def forward(self, x: Tensor) -> Tensor:
-        return self.linear(x) + (x @ self.lora_A.T @ self.lora_B.T) * self.scaling
-
+from .lora import *
+from .embeddings import *
 
 class DecoderOnlyLayer(nn.Module):
     """Decoder-only transformer layer without cross-attention
@@ -240,57 +98,6 @@ class DecoderOnlyLayer(nn.Module):
                 nn.Dropout(0.1)
             )
 
-    class LoRAAttention(nn.Module):
-        """LoRA-enhanced self-attention implementation"""
-
-        def __init__(
-                self,
-                dim_model: int,
-                num_head: int,
-                rank: int,
-                alpha: int,
-                device: torch.device
-        ):
-            super().__init__()
-            self.embed_dim = dim_model
-            self.num_heads = num_head
-            self.head_dim = dim_model // num_head
-
-            # LoRA projections
-            self.q_proj = LoRALinear(dim_model, dim_model, rank, alpha, device=device)
-            self.k_proj = LoRALinear(dim_model, dim_model, rank, alpha, device=device)
-            self.v_proj = LoRALinear(dim_model, dim_model, rank, alpha, device=device)
-            self.out_proj = LoRALinear(dim_model, dim_model, rank, alpha, device=device)
-
-        def forward(
-                self,
-                query: Tensor,
-                key: Tensor,
-                value: Tensor,
-                attn_mask: Optional[Tensor] = None,
-        ) -> Tuple[Tensor, Tensor]:
-            # Shared projections for decoder-only self-attention
-            q = self.q_proj(query)
-            k = self.k_proj(key)
-            v = self.v_proj(value)
-
-            # Reshape for multi-head attention
-            q = q.view(*q.shape[:2], self.num_heads, self.head_dim).transpose(1, 2)
-            k = k.view(*k.shape[:2], self.num_heads, self.head_dim).transpose(1, 2)
-            v = v.view(*v.shape[:2], self.num_heads, self.head_dim).transpose(1, 2)
-
-            # Scaled dot-product attention
-            attn_weights = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
-            if attn_mask is not None:
-                attn_weights += attn_mask
-
-            attn_weights = F.softmax(attn_weights, dim=-1)
-            output = torch.matmul(attn_weights, v)
-
-            # Combine heads and project
-            output = output.transpose(1, 2).contiguous().view(*query.shape[:2], self.embed_dim)
-            return self.out_proj(output), attn_weights
-
     def forward(
             self,
             x: Tensor,
@@ -309,6 +116,7 @@ class DecoderOnlyLayer(nn.Module):
         # Feedforward branch
         ffn_out = self.ffn(self.norm2(x))
         return x + self.dropout(ffn_out)
+
 
 class TransforMole(pl.LightningModule):
     """
@@ -491,18 +299,28 @@ class TransforMole(pl.LightningModule):
         ]
         return torch.optim.Adam(params, lr=self.hparams.lr)
 
+    import json
+
     @torch.no_grad()
     def generate(
             self,
-            num_samples: int = 100,
-            max_length: int = 100,
-            start_token: int = 1,
-            end_token: int = 2,
-            output_dir: str = GEN_PATH
+            num_samples: int,
+            max_length: int,
+            output_dir: str = GEN_PATH,
+            vocab_path: str = None
     ) -> None:
         """Generate molecules and save as CSV"""
         self.eval()
         os.makedirs(output_dir, exist_ok=True)
+
+        # Load vocabulary
+        with open(vocab_path, 'r') as f:
+            vocab = yaml.safe_load(f)
+        idx_to_token = {v: k for k, v in vocab.items()}
+
+        # Extract start and end token indices
+        start_token = vocab['<BOS>']
+        end_token = vocab['<EOS>']
 
         generated = []
         for _ in range(num_samples):
@@ -510,7 +328,8 @@ class TransforMole(pl.LightningModule):
             for _ in range(max_length):
                 inputs = torch.tensor(tokens).to(self.device)
                 logits = self(inputs, torch.ones_like(inputs).bool())
-                next_token = logits[0, -1].argmax().item()
+                probs = torch.softmax(logits[0, -1], dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1).item()
 
                 if next_token == end_token:
                     break
@@ -518,13 +337,12 @@ class TransforMole(pl.LightningModule):
 
             generated.append(tokens[0][1:])  # Remove start token
 
+        # Decode tokens to SMILES
+        decoded_smiles = [''.join([idx_to_token[idx] for idx in seq]) for seq in generated]
+
+        # Write to CSV
         with open(f"{output_dir}/generated.csv", "w") as f:
             writer = csv.writer(f)
             writer.writerow(["SMILES"])
-            for i,seq in enumerate(generated):
-                writer.writerow([f'SMILES_{i}', seq])
-
-
-# Full Workflow Example
-if __name__ == "__main__":
-    pass
+            for i, smiles in enumerate(decoded_smiles):
+                writer.writerow([f'SMILES_{i}', smiles])
