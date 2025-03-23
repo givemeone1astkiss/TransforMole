@@ -8,7 +8,7 @@ import numpy as np
 from rdkit import Chem
 from tqdm import tqdm
 import os
-from ..config import DATA_PATH, SAVE_PATH
+from ..config import DATA_PATH, OUTPUT_PATH
 import re
 import yaml
 
@@ -248,7 +248,7 @@ class SmilesTokenizer:
             r"($$.*?$$|Br?|Cl?|N|O|S|P|F|I|b|c|n|o|s|p|\||$|$|\.|=|#|-|\+|\\|/|:|~|@|\?|>|\*|\$|\%[0-9]{2}|[0-9]|.)"
         )
         if load_vocab is True:
-            self.load_vocab(path=SAVE_PATH)
+            self.load_vocab(path=OUTPUT_PATH)
         elif type(load_vocab) is str:
             self.load_vocab(path=load_vocab)
         else:
@@ -318,7 +318,7 @@ class SmilesTokenizer:
         self.save_vocab()
         return self.vocab
 
-    def save_vocab(self, path=SAVE_PATH):
+    def save_vocab(self, path=OUTPUT_PATH):
         """
         Save vocabulary to file.
         :param path: Path to save the vocabulary.
@@ -331,7 +331,7 @@ class SmilesTokenizer:
             yaml.dump(self.vocab, f)
         print('Vocabulary saved successfully.')
 
-    def load_vocab(self, path=SAVE_PATH):
+    def load_vocab(self, path):
         """
         Load vocabulary from file.
         :param path: Path to load the vocabulary.

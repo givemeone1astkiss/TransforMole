@@ -1,10 +1,8 @@
 import os
 import csv
 import pytorch_lightning as pl
-from typing import Tuple, Optional
 import yaml
-from ..config import GEN_PATH
-from torch.nn import functional as F
+from ..config import OUTPUT_PATH
 from .lora import *
 from .embeddings import *
 
@@ -306,7 +304,7 @@ class TransforMole(pl.LightningModule):
             self,
             num_samples: int,
             max_length: int,
-            output_dir: str = GEN_PATH,
+            output_dir: str = OUTPUT_PATH,
             vocab_path: str = None
     ) -> None:
         """Generate molecules and save as CSV"""
@@ -343,6 +341,6 @@ class TransforMole(pl.LightningModule):
         # Write to CSV
         with open(f"{output_dir}/generated.csv", "w") as f:
             writer = csv.writer(f)
-            writer.writerow(["SMILES"])
+            writer.writerow(["ID","SMILES"])
             for i, smiles in enumerate(decoded_smiles):
                 writer.writerow([f'SMILES_{i}', smiles])

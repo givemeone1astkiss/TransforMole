@@ -1,1 +1,2 @@
-from .config import *
+from .glob import *
+from .seeds import *

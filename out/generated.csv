@@ -1,4 +1,4 @@
-SMILES
+ID,SMILES
 SMILES_0,CCCOC(=O)c1c(C)[nH]c(C(=O)Nc2ccccc2OC)c1C
 SMILES_1,CCc1c(C(=O)OC(C)C)[nH]c(C(=O)NCc2ccc(C)cc2)c1C
 SMILES_2,COc1cccc(S(=O)(=O)NCc2ccccc2F)c1
