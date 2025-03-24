@@ -21,9 +21,6 @@ class DecoderOnlyLayer(nn.Module):
         num_head: Number of attention heads
         dim_feedforward: Dimension of FFN hidden layer
         dropout: Dropout probability (default: 0.1)
-        use_lora: Enable LoRA adaptation
-        lora_rank: LoRA projection rank
-        lora_alpha: LoRA scaling factor
     """
 
     def __init__(
@@ -32,9 +29,6 @@ class DecoderOnlyLayer(nn.Module):
             num_head: int,
             dim_feedforward: int = 2048,
             dropout: float = 0.1,
-            use_lora: bool = False,
-            lora_rank: int = 8,
-            lora_alpha: int = 16,
             device: torch.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     ):
         super().__init__()
@@ -43,56 +37,18 @@ class DecoderOnlyLayer(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
         # Self-attention components
-        self.self_attn = self._create_attention(
-            dim_model=dim_model, num_head=num_head, use_lora=use_lora, rank=lora_rank, alpha=lora_alpha, device=device
-        )
-
-        # Feedforward components
-        self.ffn = self._create_ffn(
-            dim_model=dim_model, dim_feedforward=dim_feedforward, use_lora=use_lora, rank=lora_rank, alpha=lora_alpha, device=device
-        )
-
-    def _create_attention(
-            self,
-            dim_model: int,
-            num_head: int,
-            use_lora: bool,
-            rank: int,
-            alpha: int,
-            device: torch.device
-    ) -> nn.Module:
-        """Create self-attention mechanism with LoRA options"""
-        return nn.MultiheadAttention(
+        self.self_attn = nn.MultiheadAttention(
             embed_dim=dim_model,
             num_heads=num_head,
             batch_first=True,
             device=device
-        ) if not use_lora else self.LoRAAttention(
-            dim_model, num_head, rank, alpha, device=device
         )
 
-    @staticmethod
-    def _create_ffn(
-            dim_model: int,
-            dim_feedforward: int,
-            use_lora: bool,
-            rank: int,
-            alpha: int,
-            device: torch.device
-    ) -> nn.Sequential:
-        """Create position-wise FFN with LoRA options"""
-        if not use_lora:
-            return nn.Sequential(
+        # Feedforward components
+        self.ffn = nn.Sequential(
                 nn.Linear(dim_model, dim_feedforward),
                 nn.GELU(),
                 nn.Linear(dim_feedforward, dim_model),
-                nn.Dropout(0.1)
-            )
-        else:
-            return nn.Sequential(
-                LoRALinear(in_features=dim_model, out_features=dim_feedforward, rank=rank, alpha=alpha, device=device),
-                nn.GELU(),
-                LoRALinear(in_features=dim_feedforward, out_features=dim_model, rank=rank, alpha=alpha, device=device),
                 nn.Dropout(0.1)
             )
 
@@ -129,9 +85,6 @@ class TransforMole(pl.LightningModule):
             num_layers: int = 6,
             dim_feedforward: int = 1024,
             lr: float = 1e-4,
-            use_lora: bool = False,
-            lora_rank: int = 8,
-            lora_alpha: int = 16,
             pad_idx: int = 0,
             use_RePE: bool = False,
             RoPE_num_head: int = 8,
@@ -148,9 +101,6 @@ class TransforMole(pl.LightningModule):
         num_layers: Number of transformer layers
         dim_feedforward: Feedforward dimension
         lr: Learning rate
-        use_lora: Enable LoRA adaptation
-        lora_rank: LoRA projection rank
-        lora_alpha: LoRA scaling factor
         pad_idx: Padding token index
         """
         super().__init__()
@@ -168,45 +118,11 @@ class TransforMole(pl.LightningModule):
                 dim_model=dim_model,
                 num_head=num_head,
                 dim_feedforward=dim_feedforward,
-                use_lora=use_lora,
-                lora_rank=lora_rank,
-                lora_alpha=lora_alpha,
                 device=self.device
             ) for _ in range(num_layers)
         ])
-        self._init_lora(use_lora, lora_rank, lora_alpha)
         self.fc_out = nn.Linear(dim_model, vocab_size, device=self.device)
         self.loss_fn = nn.CrossEntropyLoss(ignore_index=pad_idx)
-
-    def _init_lora(self, use_lora: bool, rank: int, alpha: int) -> None:
-        """Initialize LoRA parameters in decoder layers
-
-        Args:
-            use_lora: Enable LoRA adaptation mode
-            rank: LoRA projection rank
-            alpha: LoRA scaling factor
-        """
-        if not use_lora:
-            return
-
-        for layer in self.layers:
-            # Initialize self-attention LoRA parameters
-            if isinstance(layer.self_attn, DecoderOnlyLayer.LoRAAttention):
-                attn = layer.self_attn
-                for proj in [attn.q_proj, attn.k_proj, attn.v_proj, attn.out_proj]:
-                    nn.init.kaiming_uniform_(proj.lora_A, a=math.sqrt(5))
-                    nn.init.zeros_(proj.lora_B)
-                    proj.scaling = alpha / rank
-                    proj.linear.weight.requires_grad_(False)
-
-            # Initialize FFN LoRA parameters
-            ffn_linears = [layer.ffn[0], layer.ffn[2]]  # First and third layers are Linear
-            for linear in ffn_linears:
-                if isinstance(linear, LoRALinear):
-                    nn.init.kaiming_uniform_(linear.lora_A, a=math.sqrt(5))
-                    nn.init.zeros_(linear.lora_B)
-                    linear.scaling = alpha / rank
-                    linear.linear.weight.requires_grad_(False)
 
     def _create_mask(self, sz: int) -> Tensor:
         """Generate causal attention mask"""
@@ -223,7 +139,7 @@ class TransforMole(pl.LightningModule):
         encoded = self.pos_encoder(embedded)
 
         for layer in self.transformer:
-            encoded = layer(encoded, src_mask)
+            encoded = layer(encoded, src_mask & attention_mask)
 
         return self.fc_out(encoded)
 
@@ -297,8 +213,6 @@ class TransforMole(pl.LightningModule):
         ]
         return torch.optim.Adam(params, lr=self.hparams.lr)
 
-    import json
-
     @torch.no_grad()
     def generate(
             self,
@@ -338,9 +252,16 @@ class TransforMole(pl.LightningModule):
         # Decode tokens to SMILES
         decoded_smiles = [''.join([idx_to_token[idx] for idx in seq]) for seq in generated]
 
+        # Find the largest existing file number
+        existing_files = os.listdir(output_dir)
+        file_numbers = [int(f[6:-4]) for f in existing_files if f.startswith("smiles") and f.endswith(".csv")]
+        largest_existing_number = max(file_numbers, default=-1)
+
         # Write to CSV
-        with open(f"{output_dir}/generated.csv", "w") as f:
+        output_file = f"{output_dir}/smiles{largest_existing_number + 1}.csv"
+        with open(output_file, "w") as f:
             writer = csv.writer(f)
-            writer.writerow(["ID","SMILES"])
+            writer.writerow(["ID", "SMILES"])
             for i, smiles in enumerate(decoded_smiles):
                 writer.writerow([f'SMILES_{i}', smiles])
+        return f"{output_dir}/smiles{largest_existing_number + 1}.csv"
