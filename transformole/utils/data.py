@@ -11,6 +11,7 @@ import os
 from ..config import DATA_PATH, OUTPUT_PATH
 import re
 import yaml
+from multiprocessing import Pool, cpu_count
 
 class SmilesDataset(Dataset):
     """
@@ -101,7 +102,7 @@ class SmilesDataModule(LightningDataModule):
         :return: SmilesDataModule instance
         """
         train = open(f"{data_path}/moses/train.csv").read().split("\n")[:-5000]
-        valid = open(f"{data_path}/moses/valid.csv").read().split("\n")[5000:-1]
+        valid = open(f"{data_path}/moses/train.csv").read().split("\n")[5000:-1]
         test = open(f"{data_path}/moses/test.csv").read().split("\n")
         return cls(raw_data=(train, valid, test))
 
@@ -119,7 +120,7 @@ class SmilesDataModule(LightningDataModule):
     def __init__(
         self,
         batch_size: int = 32,
-        max_seq_len: int = 128,
+        max_seq_len: int = 100,
         num_workers: int = 4,
         augment: bool = True,
         raw_data: Tuple[list, list, list] = None,
@@ -150,9 +151,7 @@ class SmilesDataModule(LightningDataModule):
             self.train_data = process_data(self.raw_data[0], augment=self.augment)
             self.valid_data = process_data(self.raw_data[1])
         elif stage == "test" or stage is None:
-            self.test_data = SmilesDataset(
-                self.raw_data[2], self.tokenizer, max_length=self.max_seq_len
-            )
+            self.valid_data = process_data(self.raw_data[2])
         else:
             raise ValueError(f"Invalid stage: {stage}")
 
@@ -209,10 +208,10 @@ def write_csv(stage: str):
     Generate CSV file for Moses dataset
     :param stage: 'train', 'valid', or 'test'
     """
-    data = tqdm(get_dataset(stage), desc=f"Processing {stage} data")
-    if not os.path.exists(DATA_PATH):
-        os.makedirs(DATA_PATH)
-    with open(f"{DATA_PATH}{stage}.csv", "w") as f:
+    data = tqdm(get_dataset(stage), desc=f"Saving {stage} data")
+    if not os.path.exists(f"{DATA_PATH}moses/"):
+        os.makedirs(f"{DATA_PATH}moses/")
+    with open(f"{DATA_PATH}moses/{stage}.csv", "w") as f:
         for s in data:
             f.write(f"{s}\n")
 
@@ -348,49 +347,43 @@ class SmilesTokenizer:
     def _tokenize(self, smile):
         return [token for token in self._regex.findall(smile) if token]
 
+    def _encode_smiles(self, smile):
+        tokens = [self.vocab["<BOS>"]] + [self.vocab.get(token, self.vocab["<UNK>"]) for token in smile] + [self.vocab["<EOS>"]]
+        return tokens
+
+    def _pad_sequence(self, args):
+        seq, max_len = args
+        padded_seq = seq + [self.vocab["<PAD>"]] * (max_len - len(seq))
+        mask = [1] * len(seq) + [0] * (max_len - len(seq))
+        return padded_seq, mask
+
     def encode(self, smiles_list, max_length, padding, truncation, return_tensors):
-        """
-        Encode SMILES strings.
-        :param padding: Whether to pad sequences.
-        :param truncation: Whether to truncate sequences.
-        :param self: SmilesTokenizer object.
-        :param smiles_list: SMILES strings to be encoded.
-        :param max_length: Maximum length of the encoded sequences.
-        :param return_tensors: Whether to return PyTorch tensors.
-        :return: Encoded sequences.
-        """
-        encoded = []
         if truncation:
-            smiles_list = [smile[:max_length-2] for smile in smiles_list]
+            smiles_list = [smile[:max_length - 2] for smile in smiles_list]
         else:
             smiles_list = [smile for smile in smiles_list if len(smile) <= max_length]
 
-        for smile in tqdm(smiles_list, desc="Encoding SMILES"):
-            tokens = ["<BOS>"] + self._tokenize(smile) + ["<EOS>"]
-            ids = [self.vocab.get(token, self.vocab["<UNK>"]) for token in tokens]
-            encoded.append(ids)
+        with Pool(cpu_count()) as pool:
+            encoded = list(tqdm(pool.imap(
+                self._encode_smiles,
+                smiles_list
+            ), total=len(smiles_list), desc="Encoding SMILES"))
 
-        # Calculate max length.
-        max_len = max(len(seq) for seq in encoded) if max_length is None else max_length
-
-        # Pad sequences.
-        padded = []
-        masks = []
         if padding:
-            for seq in tqdm(encoded, desc="Padding sequences"):
-                padded_seq = seq + [self.vocab["<PAD>"]] * (max_len - len(seq))
-                mask = [1] * len(seq) + [0] * (max_len - len(seq))
-                padded.append(padded_seq)
-                masks.append(mask)
+            with Pool(cpu_count()) as pool:
+                padded_results = list(tqdm(pool.imap(
+                    self._pad_sequence,
+                    [(seq, max_length) for seq in encoded]
+                ), total=len(encoded), desc="Padding sequences"))
+            padded, masks = zip(*padded_results)
         else:
             padded = encoded
             masks = [[1] * len(seq) for seq in encoded]
 
-        # Tokenize sequences.
         if return_tensors == "pt":
             return (
                 torch.tensor(padded, dtype=torch.long).squeeze(),
-                torch.tensor(masks, dtype=torch.long).squeeze(),
+                torch.tensor(masks, dtype=torch.float).squeeze(),
             )
         else:
             return (

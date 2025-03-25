@@ -5,6 +5,7 @@ import yaml
 from ..config import OUTPUT_PATH
 from .lora import *
 from .embeddings import *
+from tqdm import tqdm
 
 class DecoderOnlyLayer(nn.Module):
     """Decoder-only transformer layer without cross-attention
@@ -56,6 +57,7 @@ class DecoderOnlyLayer(nn.Module):
             self,
             x: Tensor,
             attn_mask: Optional[Tensor] = None,
+            key_padding_mask: Optional[Tensor] = None,
     ) -> Tensor:
         """Forward pass with residual connections"""
         # Self-attention branch
@@ -63,7 +65,8 @@ class DecoderOnlyLayer(nn.Module):
             query=self.norm1(x),
             key=self.norm1(x),
             value=self.norm1(x),
-            attn_mask=attn_mask
+            attn_mask=attn_mask,
+            key_padding_mask = key_padding_mask
         )
         x = x + self.dropout(attn_out)
 
@@ -139,8 +142,7 @@ class TransforMole(pl.LightningModule):
         encoded = self.pos_encoder(embedded)
 
         for layer in self.transformer:
-            encoded = layer(encoded, src_mask & attention_mask)
-
+            encoded = layer(encoded, attn_mask=src_mask, key_padding_mask=attention_mask.to(self.device))
         return self.fc_out(encoded)
 
     def training_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> Tensor:
@@ -161,7 +163,7 @@ class TransforMole(pl.LightningModule):
             shift_logits.view(-1, self.hparams.vocab_size),
             shift_labels.view(-1)
         )
-        self.log("train_loss", loss, prog_bar=True)
+        self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch= True)
         return loss
 
     def validation_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> Tensor:
@@ -182,7 +184,7 @@ class TransforMole(pl.LightningModule):
             shift_logits.view(-1, self.hparams.vocab_size),
             shift_labels.view(-1)
         )
-        self.log("val_loss", loss, prog_bar=True)
+        self.log("val_loss", loss, prog_bar=True, on_step=True, on_epoch= True)
         return loss
 
     def test_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> Tensor:
@@ -203,27 +205,25 @@ class TransforMole(pl.LightningModule):
             shift_logits.view(-1, self.hparams.vocab_size),
             shift_labels.view(-1)
         )
-        self.log("test_loss", loss, prog_bar=True)
+        self.log("test_loss", loss, prog_bar=True, on_step=True, on_epoch= True)
         return loss
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         """Configure optimizer with LoRA parameter filtering"""
-        params = self.parameters() if not self.hparams.use_lora else [
-            p for n, p in self.named_parameters() if 'lora_' in n
-        ]
-        return torch.optim.Adam(params, lr=self.hparams.lr)
+        return torch.optim.Adam(self.parameters(), lr=self.hparams.lr)
 
     @torch.no_grad()
     def generate(
             self,
             num_samples: int,
             max_length: int,
-            output_dir: str = OUTPUT_PATH,
-            vocab_path: str = None
-    ) -> None:
+            output_dir: str = f"{OUTPUT_PATH}generated",
+            vocab_path: str = f"{OUTPUT_PATH}vocab/vocab.yaml"
+    ) -> str:
         """Generate molecules and save as CSV"""
         self.eval()
-        os.makedirs(output_dir, exist_ok=True)
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
 
         # Load vocabulary
         with open(vocab_path, 'r') as f:
@@ -233,16 +233,18 @@ class TransforMole(pl.LightningModule):
         # Extract start and end token indices
         start_token = vocab['<BOS>']
         end_token = vocab['<EOS>']
+        unk_token = vocab['<UNK>']
 
         generated = []
-        for _ in range(num_samples):
+        for _ in tqdm(range(num_samples), desc="Generating molecules"):
             tokens = [[start_token]]
             for _ in range(max_length):
                 inputs = torch.tensor(tokens).to(self.device)
-                logits = self(inputs, torch.ones_like(inputs).bool())
-                probs = torch.softmax(logits[0, -1], dim=-1)
+                logits = self(inputs, torch.ones_like(inputs).float())
+                probs = torch.softmax(logits[0, -1], dim=-1).to(self.device)
                 next_token = torch.multinomial(probs, num_samples=1).item()
-
+                while next_token == unk_token:
+                    next_token = torch.multinomial(probs, num_samples=1).item()
                 if next_token == end_token:
                     break
                 tokens[0].append(next_token)
@@ -250,18 +252,18 @@ class TransforMole(pl.LightningModule):
             generated.append(tokens[0][1:])  # Remove start token
 
         # Decode tokens to SMILES
-        decoded_smiles = [''.join([idx_to_token[idx] for idx in seq]) for seq in generated]
+        decoded_smiles = [''.join([idx_to_token[idx] for idx in seq if idx != unk_token]) for seq in generated]
 
         # Find the largest existing file number
         existing_files = os.listdir(output_dir)
-        file_numbers = [int(f[6:-4]) for f in existing_files if f.startswith("smiles") and f.endswith(".csv")]
+        file_numbers = [int(f[7:-4]) for f in existing_files if f.startswith("smiles_") and f.endswith(".csv")]
         largest_existing_number = max(file_numbers, default=-1)
 
         # Write to CSV
-        output_file = f"{output_dir}/smiles{largest_existing_number + 1}.csv"
+        output_file = f"{output_dir}/smiles_{largest_existing_number + 1}.csv"
         with open(output_file, "w") as f:
             writer = csv.writer(f)
             writer.writerow(["ID", "SMILES"])
             for i, smiles in enumerate(decoded_smiles):
                 writer.writerow([f'SMILES_{i}', smiles])
-        return f"{output_dir}/smiles{largest_existing_number + 1}.csv"
+        return output_file
