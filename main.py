@@ -20,7 +20,7 @@ if __name__=="__main__":
     logger = pl.loggers.TensorBoardLogger(
             save_dir=f"{OUTPUT_PATH}/logs",
             name="pretrain",
-            version = 'Version 1',
+            version = 'Version 0',
         )
 
     checkpoint = ModelCheckpoint(
