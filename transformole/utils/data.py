@@ -1,6 +1,6 @@
 from typing import Tuple
 from torch.utils.data import Dataset, DataLoader
-from moses import get_dataset
+# from moses import get_dataset
 from pytorch_lightning import LightningDataModule
 from collections import Counter, defaultdict
 import torch
@@ -203,19 +203,19 @@ def analyze_dataset(smiles_list: list) -> tuple:
     )
 
 
-def write_csv(stage: str):
-    """
-    Generate CSV file for Moses dataset
-    :param stage: 'train', 'valid', or 'test'
-    """
-    data = tqdm(get_dataset(stage), desc=f"Saving {stage} data")
-    if not os.path.exists(f"{DATA_PATH}moses/"):
-        os.makedirs(f"{DATA_PATH}moses/")
-    with open(f"{DATA_PATH}moses/{stage}.csv", "w") as f:
-        for s in data:
-            f.write(f"{s}\n")
+# def write_csv(stage: str):
+#     """
+#     Generate CSV file for Moses dataset
+#     :param stage: 'train', 'valid', or 'test'
+#     """
+#     data = tqdm(get_dataset(stage), desc=f"Saving {stage} data")
+#     if not os.path.exists(f"{DATA_PATH}moses/"):
+#         os.makedirs(f"{DATA_PATH}moses/")
+#     with open(f"{DATA_PATH}moses/{stage}.csv", "w") as f:
+#         for s in data:
+#             f.write(f"{s}\n")
 
-    print(f"{stage}.csv saved successfully!")
+#     print(f"{stage}.csv saved successfully!")
 
 
 def smiles_to_csv(smiles_path: str, csv_path: str):
