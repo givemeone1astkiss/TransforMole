@@ -19,24 +19,27 @@ def get_checkpoint_callback():
     )
 
 class MoleculeGenerationCallback(pl.Callback):
-    def __init__(self, train_csv_path: str):
+    def __init__(self, num_samples: int, train_csv_path: str, interval: int = 1):
         super().__init__()
         self.tran_csv_path = train_csv_path
+        self.num_samples = num_samples
+        self.interval = interval
 
     def on_train_epoch_end(self, trainer, pl_module):
-        # Generate 100 molecules
-        output_dir = os.path.join(OUTPUT_PATH, 'generated')
-        csv_path = pl_module.generate(num_samples=100, max_length=100, output_dir=output_dir, vocab_path=f'{OUTPUT_PATH}vocab/vocab.yaml')
+        if (trainer.current_epoch + 1) % self.interval == 0:
+            # Generate 100 molecules
+            output_dir = os.path.join(OUTPUT_PATH, 'generated')
+            csv_path = pl_module.generate(num_samples=self.num_samples, max_length=100, output_dir=output_dir, vocab_path=f'{OUTPUT_PATH}vocab/vocab.yaml')
 
-        # Calculate metrics
-        avg_atom_count = calculate_atom_count_distribution(csv_path)
-        valid_ratio = calculate_valid_smiles_ratio(csv_path)
-        avg_max_similarity = calculate_similarity(csv_path, self.tran_csv_path)
+            # Calculate metrics
+            avg_atom_count = calculate_atom_count_distribution(csv_path)
+            valid_ratio = calculate_valid_smiles_ratio(csv_path)
+            avg_max_similarity = calculate_similarity(csv_path, self.tran_csv_path)
 
-        # Log metrics
-        trainer.logger.experiment.add_scalar('valid_smiles_ratio', valid_ratio, trainer.current_epoch)
-        trainer.logger.experiment.add_scalar('average_atom_count', avg_atom_count, trainer.current_epoch)
-        trainer.logger.experiment.add_scalar('average_max_similarity', avg_max_similarity, trainer.current_epoch)
+            # Log metrics
+            trainer.logger.experiment.add_scalar('valid_smiles_ratio', valid_ratio, trainer.current_epoch)
+            trainer.logger.experiment.add_scalar('average_atom_count', avg_atom_count, trainer.current_epoch)
+            trainer.logger.experiment.add_scalar('average_max_similarity', avg_max_similarity, trainer.current_epoch)
 
-        # Generate molecule images
-        generate_molecule_images(csv_path)
+            # Generate molecule images
+            generate_molecule_images(csv_path)

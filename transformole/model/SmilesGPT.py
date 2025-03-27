@@ -1,5 +1,6 @@
 import os
 import csv
+from typing import final, List
 import pytorch_lightning as pl
 import yaml
 from ..config import OUTPUT_PATH
@@ -15,7 +16,6 @@ class DecoderOnlyLayer(nn.Module):
     - Position-wise feedforward network
     - Pre-LayerNorm configuration
     - Residual connections
-    - Dynamic LoRA integration
 
     Args:
         dim_model: Dimension of model embeddings
@@ -74,7 +74,7 @@ class DecoderOnlyLayer(nn.Module):
         ffn_out = self.ffn(self.norm2(x))
         return x + self.dropout(ffn_out)
 
-
+@final
 class TransforMole(pl.LightningModule):
     """
     Molecular Transformer model for SMILES generation.
@@ -212,15 +212,43 @@ class TransforMole(pl.LightningModule):
         """Configure optimizer with LoRA parameter filtering"""
         return torch.optim.Adam(self.parameters(), lr=self.hparams.lr)
 
+    @staticmethod
+    def _sample_molecules(model, device, start_token, end_token, unk_token, max_length, num_samples: int,
+                          batch_size: int) -> List[List[int]]:
+        generated = []
+        num_batches = (num_samples + batch_size - 1) // batch_size  # Calculate the number of batches
+        for _ in tqdm(range(num_batches), desc='Generating molecules'):
+            current_batch_size = min(batch_size, num_samples - len(generated))
+            tokens = torch.full((current_batch_size, 1), start_token, dtype=torch.long, device=device)
+            for _ in range(max_length):
+                logits = model(tokens, torch.ones_like(tokens).float())
+                probs = torch.softmax(logits[:, -1, :], dim=-1)
+                next_tokens = torch.multinomial(probs, num_samples=1).squeeze()
+
+                # Ensure the first token after the start token is not <EOS>
+                if tokens.size(1) == 1:
+                    while (next_tokens == end_token).any() or (next_tokens == unk_token).any():
+                        next_tokens = torch.multinomial(probs, num_samples=1).squeeze()
+
+                next_tokens[next_tokens == unk_token] = torch.multinomial(probs[next_tokens == unk_token],
+                                                                          num_samples=1).squeeze()
+                tokens = torch.cat([tokens, next_tokens.unsqueeze(-1)], dim=-1)
+                if (next_tokens == end_token).all():
+                    break
+            for i in range(current_batch_size):
+                generated.append(tokens[i, 1:].tolist())  # Remove start token
+        return generated
+
     @torch.no_grad()
     def generate(
             self,
             num_samples: int,
             max_length: int,
             output_dir: str = f"{OUTPUT_PATH}generated",
-            vocab_path: str = f"{OUTPUT_PATH}vocab/vocab.yaml"
+            vocab_path: str = f"{OUTPUT_PATH}vocab/vocab.yaml",
+            batch_size: int = 32
     ) -> str:
-        """Generate molecules and save as CSV"""
+        """Generate molecules and save as CSV using batch sampling"""
         self.eval()
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
@@ -235,24 +263,20 @@ class TransforMole(pl.LightningModule):
         end_token = vocab['<EOS>']
         unk_token = vocab['<UNK>']
 
-        generated = []
-        for _ in tqdm(range(num_samples), desc="Generating molecules"):
-            tokens = [[start_token]]
-            for _ in range(max_length):
-                inputs = torch.tensor(tokens).to(self.device)
-                logits = self(inputs, torch.ones_like(inputs).float())
-                probs = torch.softmax(logits[0, -1], dim=-1).to(self.device)
-                next_token = torch.multinomial(probs, num_samples=1).item()
-                while next_token == unk_token:
-                    next_token = torch.multinomial(probs, num_samples=1).item()
-                if next_token == end_token:
-                    break
-                tokens[0].append(next_token)
-
-            generated.append(tokens[0][1:])  # Remove start token
+        # Sample molecules in batches
+        generated = self._sample_molecules(self, self.device, start_token, end_token, unk_token, max_length,
+                                           num_samples, batch_size)
 
         # Decode tokens to SMILES
-        decoded_smiles = [''.join([idx_to_token[idx] for idx in seq if idx != unk_token]) for seq in generated]
+        decoded_smiles = []
+        for seq in generated:
+            smiles = []
+            for idx in seq:
+                if idx == end_token:
+                    break
+                if idx != unk_token:
+                    smiles.append(idx_to_token[idx])
+            decoded_smiles.append(''.join(smiles))
 
         # Find the largest existing file number
         existing_files = os.listdir(output_dir)

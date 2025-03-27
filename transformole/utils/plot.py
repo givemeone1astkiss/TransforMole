@@ -2,19 +2,18 @@ import os
 import pandas as pd
 from rdkit import Chem, RDLogger
 from rdkit.Chem import Draw,AllChem, DataStructs
-from PIL import Image
 from ..config.glob import OUTPUT_PATH
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
 from multiprocessing import Pool, cpu_count
+from PIL import Image
 
-
-def generate_molecule_images(csv_path: str, output_path: str=f'{OUTPUT_PATH}image') -> None:
+def generate_molecule_images(csv_path: str, output_path: str = f'{OUTPUT_PATH}image') -> None:
     """
     Generate molecule structure images from SMILES strings in a CSV file and save them in a grid format.
     Skip invalid molecules and print their IDs.
-    :param output_path: The
+    :param output_path: The path to save the grid images.
     :param csv_path: The path to the CSV file containing molecule IDs and SMILES strings.
     :return: None
     """
@@ -38,25 +37,39 @@ def generate_molecule_images(csv_path: str, output_path: str=f'{OUTPUT_PATH}imag
             invalid_ids.append(id_)
             print(f"Error processing molecule ID {id_}: {e}")
 
-    images = [Draw.MolToImage(mol, legend=legend, size=(200, 200)) for mol, legend in tqdm(zip(mols, legends), total=len(mols), desc='Generating images')]
+    images = [Draw.MolToImage(mol, legend=legend, size=(200, 200)) for mol, legend in
+              tqdm(zip(mols, legends), total=len(mols), desc='Generating images')]
 
     # Create a directory to save the images if it doesn't exist
     os.makedirs(output_path, exist_ok=True)
 
-    # Find the largest existing file number
-    existing_files = os.listdir(output_path)
-    file_numbers = [int(f.split('_')[1].split('.')[0]) for f in existing_files if f.startswith("molecules_") and f.endswith(".png")]
-    largest_existing_number = max(file_numbers, default=-1)
+    # Find the largest existing folder number
+    existing_folders = [f for f in os.listdir(output_path) if
+                        os.path.isdir(os.path.join(output_path, f)) and f.startswith("images_")]
+    folder_numbers = [int(f.split('_')[1]) for f in existing_folders]
+    largest_existing_number = max(folder_numbers, default=-1)
 
-    # Combine images into a grid and save
-    for i in range(0, len(images), 100):
-        grid_images = images[i:i + 100]
-        img_grid = Image.new('RGB', (2000, 2000))
-        for j, img in enumerate(grid_images):
-            x = (j % 10) * 200
-            y = (j // 10) * 200
-            img_grid.paste(img, (x, y))
-        img_grid.save(os.path.join(output_path, f'molecules_{largest_existing_number + 1 + (i // 100)}.png'))
+    # Create a new folder with the next largest number
+    new_folder_path = os.path.join(output_path, f'images_{largest_existing_number + 1}')
+    os.makedirs(new_folder_path)
+
+    # Create and save grids of 10x10 images
+    grid_size = 10
+    img_width, img_height = images[0].size
+    num_images = len(images)
+    num_grids = (num_images + grid_size * grid_size - 1) // (grid_size * grid_size)
+
+    for grid_index in range(num_grids):
+        grid_img = Image.new('RGB', (img_width * grid_size, img_height * grid_size))
+        for i in range(grid_size * grid_size):
+            img_index = grid_index * grid_size * grid_size + i
+            if img_index >= num_images:
+                break
+            img = images[img_index]
+            grid_x = (i % grid_size) * img_width
+            grid_y = (i // grid_size) * img_height
+            grid_img.paste(img, (grid_x, grid_y))
+        grid_img.save(os.path.join(new_folder_path, f'molecules_{grid_index}.png'))
 
     # Print invalid molecule IDs
     if invalid_ids:
@@ -88,7 +101,7 @@ def write_fingerprint(args):
     else:
         return index, ''
 
-def calculate_similarity(source_csv_path: str, target_csv_path: str, output_path: str=f'{OUTPUT_PATH}similarity') -> float:
+def calculate_similarity(source_csv_path: str, target_csv_path: str, output_path: str=f'{OUTPUT_PATH}similarity/') -> float:
     source_data = pd.read_csv(source_csv_path)
     target_data = pd.read_csv(target_csv_path, header=None, names=['SMILES'])
 
@@ -120,25 +133,23 @@ def calculate_similarity(source_csv_path: str, target_csv_path: str, output_path
         else:
             max_similarities.append(np.nan)
 
-    os.makedirs(output_path, exist_ok=True)
-
-    existing_files = os.listdir(output_path)
+    os.makedirs(f"{output_path}similarity/", exist_ok=True)
+    os.makedirs(f"{output_path}similarity_histogram/", exist_ok=True)
+    existing_files = os.listdir(f"{output_path}similarity/")
     file_numbers = [int(f.split('_')[1].split('.')[0]) for f in existing_files if
                     f.startswith("similarity_") and f.endswith(".csv")]
     largest_existing_number = max(file_numbers, default=-1)
-
     similarity_df = pd.DataFrame({'ID': source_ids, 'Max_Similarity': max_similarities})
-    similarity_df.to_csv(os.path.join(output_path, f'similarity_{largest_existing_number+1}.csv'), index=False)
-
+    similarity_df.to_csv(os.path.join(output_path, f'similarity/similarity_{largest_existing_number+1}.csv'), index=False)
+    existing_files = os.listdir(f"{output_path}similarity_histogram/")
     file_numbers = [int(f.split('_')[2].split('.')[0]) for f in existing_files if
                     f.startswith("similarity_histogram_") and f.endswith(".png")]
     largest_existing_number = max(file_numbers, default=-1)
-
     plt.hist([s for s in max_similarities if not np.isnan(s)], bins=20, edgecolor='black')
     plt.xlabel('Maximum Similarity')
     plt.ylabel('Frequency')
     plt.title('Similarity Distribution')
-    plt.savefig(os.path.join(output_path, f'similarity_histogram_{largest_existing_number+1}.png'))
+    plt.savefig(os.path.join(output_path, f'similarity_histogram/similarity_histogram_{largest_existing_number+1}.png'))
     plt.close()
 
     if invalid_source_smiles:
@@ -163,9 +174,12 @@ def calculate_valid_smiles_ratio(csv_path: str) -> float:
     total_count = len(smiles)
 
     for s in smiles:
-        mol = Chem.MolFromSmiles(s)
-        if mol is not None:
-            valid_count += 1
+        try:
+            mol = Chem.MolFromSmiles(s)
+            if mol is not None:
+                valid_count += 1
+        except Exception as e:
+            print(f"Error processing molecule with SMILES{s}: {e}")
 
     return valid_count / total_count if total_count > 0 else 0.0
 
@@ -183,12 +197,16 @@ def calculate_atom_count_distribution(csv_path: str, output_path: str=f'{OUTPUT_
     invalid_smiles = []
 
     for s in tqdm(smiles, desc='Calculating atom counts'):
-        mol = Chem.MolFromSmiles(s)
-        if mol is not None:
-            atom_counts.append(mol.GetNumAtoms())
-        else:
+        try :
+            mol = Chem.MolFromSmiles(s)
+            if mol is not None:
+                atom_counts.append(mol.GetNumAtoms())
+            else:
+                invalid_smiles.append(s)
+        except Exception as e:
             invalid_smiles.append(s)
-
+            print(f"Error processing molecule with SMILES {s}: {e}")
+            
     # Create a directory to save the histogram if it doesn't exist
     os.makedirs(output_path, exist_ok=True)
 

@@ -12,6 +12,7 @@ from ..config import DATA_PATH, OUTPUT_PATH
 import re
 import yaml
 from multiprocessing import Pool, cpu_count
+import csv
 
 class SmilesDataset(Dataset):
     """
@@ -390,3 +391,25 @@ class SmilesTokenizer:
                 np.array(padded),
                 np.array(masks),
             )
+
+def sdfs_to_csv(directory_path: str):
+    smiles_list = []
+
+    # Loop through all files in the directory
+    for filename in os.listdir(directory_path):
+        if filename.endswith(".sdf"):
+            sdf_path = os.path.join(directory_path, filename)
+            # Parse the SDF file
+            suppl = Chem.SDMolSupplier(sdf_path)
+            for mol in suppl:
+                if mol is not None:
+                    smiles = Chem.MolToSmiles(mol)
+                    smiles_list.append(smiles)
+
+    # Write SMILES to a CSV file
+    output_csv_path = os.path.join(directory_path, "smiles.csv")
+    with open(output_csv_path, "w", newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["SMILES"])
+        for smiles in smiles_list:
+            writer.writerow([smiles])
