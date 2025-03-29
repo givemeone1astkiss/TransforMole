@@ -49,7 +49,7 @@ class MoleculeGenerationCallback(pl.Callback):
             generate_molecule_images(csv_path, output_path=f'{OUTPUT_PATH}image/{self.name}-V{self.version}/')
 
 
-def get_trainer(name: str, version: int, train_csv_path: str, max_epochs: int, num_samples=128, interval: int = 1):
+def get_trainer(name: str, version: int, train_csv_path: str, max_epochs: int, num_samples=128, interval: int = 1, val_check_interval: int = 1):
     logger = pl.loggers.TensorBoardLogger(
         save_dir=f"{OUTPUT_PATH}/logs",
         name=name,
@@ -57,8 +57,8 @@ def get_trainer(name: str, version: int, train_csv_path: str, max_epochs: int, n
     )
 
     checkpoint = ModelCheckpoint(
-        dirpath=f"{OUTPUT_PATH}/checkpoints",
-        filename=f'checkpoint-epoch:02d-f{name}',
+        dirpath=f"{OUTPUT_PATH}/checkpoints/{name}/",
+        filename='checkpoint-{epoch:02d}',
         save_top_k=-1,
         verbose=True
     )
@@ -78,5 +78,6 @@ def get_trainer(name: str, version: int, train_csv_path: str, max_epochs: int, n
         max_epochs=max_epochs,
         enable_progress_bar=True,
         logger=logger,
-        callbacks=[checkpoint, molecule_generation_callback]
+        callbacks=[checkpoint, molecule_generation_callback],
+        check_val_every_n_epoch=val_check_interval
     )

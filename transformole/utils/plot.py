@@ -2,7 +2,6 @@ import os
 import pandas as pd
 from rdkit import Chem, RDLogger
 from rdkit.Chem import Draw,AllChem, DataStructs
-from ..config.glob import OUTPUT_PATH
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
@@ -83,25 +82,8 @@ def generate_fingerprint(smiles):
     else:
         return None
 
-def compute_max_similarities(source_fps, target_fps):
-    max_similarities = []
-    for source_fp in tqdm(source_fps, desc='Calculating similarities'):
-        if source_fp is not None:
-            similarities = [DataStructs.TanimotoSimilarity(source_fp, target_fp) for target_fp in target_fps]
-            max_similarities.append(max(similarities))
-        else:
-            max_similarities.append(np.nan)
-    return max_similarities
-
-def write_fingerprint(args):
-    index, smiles = args
-    fp = generate_fingerprint(smiles)
-    if fp is not None:
-        return index, DataStructs.BitVectToText(fp)
-    else:
-        return index, ''
-
 def calculate_similarity(source_csv_path: str, target_csv_path: str, output_path: str) -> float:
+    RDLogger.DisableLog('rdApp.*')
     source_data = pd.read_csv(source_csv_path)
     target_data = pd.read_csv(target_csv_path, header=None, names=['SMILES'])
 
@@ -159,6 +141,7 @@ def calculate_similarity(source_csv_path: str, target_csv_path: str, output_path
 
     print("Average maximum similarity:", np.nanmean(max_similarities))
     return np.nanmean(max_similarities)
+
 
 def calculate_valid_smiles_ratio(csv_path: str) -> float:
     """

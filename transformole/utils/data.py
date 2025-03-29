@@ -63,7 +63,17 @@ class SmilesDataModule(LightningDataModule):
     """
 
     @classmethod
-    def from_moses(cls, data_path=DATA_PATH):
+    def from_moses(
+        cls,
+        batch_size: int = 256,
+        max_seq_len: int = 100,
+        num_workers: int = 4,
+        augment: bool = True,
+        load_vocab = True,
+        padding_smiles: bool = True,
+        truncation_smiles: bool = False,
+        data_path=DATA_PATH
+        ):
         """
         Initialize DataModule from Moses datasets
         :return: SmilesDataModule instance
@@ -71,10 +81,20 @@ class SmilesDataModule(LightningDataModule):
         train = open(f"{data_path}/moses/train.csv").read().split("\n")[:-5000]
         valid = open(f"{data_path}/moses/train.csv").read().split("\n")[5000:-1]
         test = open(f"{data_path}/moses/test.csv").read().split("\n")
-        return cls(raw_data=(train, valid, test))
+        return cls(raw_data=(train, valid, test), batch_size=batch_size, max_seq_len=max_seq_len, num_workers=num_workers, augment=augment, load_vocab=load_vocab, padding_smiles=padding_smiles, truncation_smiles=truncation_smiles)
 
     @classmethod
-    def from_guacamol(cls, data_path=DATA_PATH):
+    def from_guacamol(
+        cls,
+        batch_size: int = 256,
+        max_seq_len: int = 100,
+        num_workers: int = 4,
+        augment: bool = True,
+        load_vocab = True,
+        padding_smiles: bool = True,
+        truncation_smiles: bool = False,
+        data_path=DATA_PATH
+        ):
         """
         Initialize DataModule from Guacamol datasets
         :return: SmilesDataModule instance
@@ -82,10 +102,20 @@ class SmilesDataModule(LightningDataModule):
         train = open(f"{data_path}/guacamol/train.csv").read().split("\n")
         valid = open(f"{data_path}/guacamol/valid.csv").read().split("\n")
         test = open(f"{data_path}/guacamol/test.csv").read().split("\n")
-        return cls(raw_data=(train, valid, test))
+        return cls(raw_data=(train, valid, test), batch_size=batch_size, max_seq_len=max_seq_len, num_workers=num_workers, augment=augment, load_vocab=load_vocab, padding_smiles=padding_smiles, truncation_smiles=truncation_smiles)
 
     @classmethod
-    def from_anesthesia(cls, data_path=DATA_PATH):
+    def from_anesthesia(
+        cls,
+        batch_size: int = 256,
+        max_seq_len: int = 100,
+        num_workers: int = 4,
+        augment: bool = True,
+        load_vocab = True,
+        padding_smiles: bool = True,
+        truncation_smiles: bool = False,
+        data_path=DATA_PATH
+        ):
         """
         Initialize DataModule from Anesthesia datasets
         :return: SmilesDataModule instance
@@ -93,7 +123,7 @@ class SmilesDataModule(LightningDataModule):
         train = open(f'{data_path}/anesthesia/finetune.csv').read().split('\n')
         valid = open(f"{data_path}/guacamol/valid.csv").read().split("\n")
         test = open(f"{data_path}/guacamol/test.csv").read().split("\n")
-        return cls(raw_data=(train, valid, test))
+        return cls(raw_data=(train, valid, test), batch_size=batch_size, max_seq_len=max_seq_len, num_workers=num_workers, augment=augment, load_vocab=load_vocab, padding_smiles=padding_smiles, truncation_smiles=truncation_smiles)
 
     def __init__(
         self,
