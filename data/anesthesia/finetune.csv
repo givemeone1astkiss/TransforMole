@@ -1,4 +1,4 @@
-SMILES
+C=CCC1(c2cccc(C3(C(F)(F)F)N=N3)c2)C(=O)NC(=O)N(C)C1=O
 CCOC(=O)c1cn(-c2ccccc2)c(-c2ccccc2)n1
 CCOC(=O)c1cn(-c2ccccc2)c(-c2ccc(Cl)cc2)n1
 CCOC(=O)c1cn(-c2ccccc2)c(-c2ccc(Br)cc2)n1
@@ -132,4 +132,4 @@ C=CCC1(c2cccc(Cl)c2)C(=O)NC(=O)N(C)C1=O
 C=CCC1(c2cccc(Br)c2)C(=O)NC(=O)N(C)C1=O
 C=CCC1(c2ccc(Cl)cc2)C(=O)NC(=O)N(C)C1=O
 C=CCC1(c2ccc(Br)cc2)C(=O)NC(=O)N(C)C1=O
-C=CCC1(c2cccc(C3(C(F)(F)F)N=N3)c2)C(=O)NC(=O)N(C)C1=O
+

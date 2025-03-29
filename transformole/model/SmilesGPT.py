@@ -89,10 +89,7 @@ class TransforMole(pl.LightningModule):
             dim_feedforward: int = 1024,
             lr: float = 1e-4,
             pad_idx: int = 0,
-            use_RePE: bool = False,
-            RoPE_num_head: int = 8,
             max_len: int = 100,
-            device: torch.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     ):
         """
         Initialize the TransforMole model.
@@ -109,12 +106,8 @@ class TransforMole(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
         self.max_len = max_len
-        self._device = device
         self.embedding = nn.Embedding(vocab_size, dim_model, padding_idx=pad_idx, device=self.device)
-        if use_RePE:
-            self.pos_encoder = RoPE(dim_model, max_len=self.max_len, num_heads=RoPE_num_head,device=self.device)
-        else:
-            self.pos_encoder = PositionalEncoding(dim_model, max_len=self.max_len, device=self.device)
+        self.pos_encoder = PositionalEncoding(dim_model, max_len=self.max_len, device=self.device)
 
         self.transformer = nn.ModuleList([
             DecoderOnlyLayer(

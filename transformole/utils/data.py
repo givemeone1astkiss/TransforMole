@@ -1,5 +1,5 @@
 from typing import Tuple
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, TensorDataset
 # from moses import get_dataset
 from pytorch_lightning import LightningDataModule
 from collections import Counter, defaultdict
@@ -57,40 +57,6 @@ def randomize_smiles(smiles, num_versions=3):
     ]
 
 
-def collate_fn(batch):
-    """自定义批处理函数"""
-    input_ids = torch.stack([item["input_ids"] for item in batch])
-    attention_mask = torch.stack([item["attention_mask"] for item in batch])
-    return {"input_ids": input_ids, "attention_mask": attention_mask}
-
-
-def process_data(smiles_list, augment=False):
-    """
-    Data preprocessing pipeline
-    :param smiles_list: list of SMILES strings
-    :param augment: whether to apply data augmentation
-    :return: list of processed SMILES strings
-    """
-
-    # Data normalization.
-    valid_smiles = [canonicalize(s) for s in smiles_list]
-    valid_smiles = [s for s in valid_smiles if s is not None]
-
-    # Data augmentation.
-    if augment:
-        augmented = []
-        for s in valid_smiles:
-            augmented.append(s)
-            augmented.extend(randomize_smiles(s))
-        valid_smiles = augmented
-
-    # Add special tokens.
-    valid_smiles = [f"<BOS> {s} <EOS>" for s in valid_smiles]
-
-    # Remove duplicates.
-    return list(set(valid_smiles))
-
-
 class SmilesDataModule(LightningDataModule):
     """
     PyTorch Lightning DataModule for Moses datasets.
@@ -118,6 +84,17 @@ class SmilesDataModule(LightningDataModule):
         test = open(f"{data_path}/guacamol/test.csv").read().split("\n")
         return cls(raw_data=(train, valid, test))
 
+    @classmethod
+    def from_anesthesia(cls, data_path=DATA_PATH):
+        """
+        Initialize DataModule from Anesthesia datasets
+        :return: SmilesDataModule instance
+        """
+        train = open(f'{data_path}/anesthesia/finetune.csv').read().split('\n')
+        valid = open(f"{data_path}/guacamol/valid.csv").read().split("\n")
+        test = open(f"{data_path}/guacamol/test.csv").read().split("\n")
+        return cls(raw_data=(train, valid, test))
+
     def __init__(
         self,
         batch_size: int = 32,
@@ -126,6 +103,8 @@ class SmilesDataModule(LightningDataModule):
         augment: bool = True,
         raw_data: Tuple[list, list, list] = None,
         load_vocab = False,
+        padding_smiles: bool = True,
+        truncation_smiles: bool = False,
     ):
         super().__init__()
         self.batch_size = batch_size
@@ -140,6 +119,8 @@ class SmilesDataModule(LightningDataModule):
         self.train_data = None
         self.valid_data = None
         self.test_data = None
+        self.padding_smiles = padding_smiles
+        self.truncation_smiles = truncation_smiles
 
     def setup(self, stage: str = None):
         """
@@ -149,31 +130,28 @@ class SmilesDataModule(LightningDataModule):
         """
         # Load raw data
         if stage == "fit" or stage is None:
-            self.train_data = process_data(self.raw_data[0], augment=self.augment)
-            self.valid_data = process_data(self.raw_data[1])
-        elif stage == "test" or stage is None:
-            self.valid_data = process_data(self.raw_data[2])
-        else:
-            raise ValueError(f"Invalid stage: {stage}")
+            self.train_data = self.raw_data[0]
+            self.valid_data = self.raw_data[1]
+        if stage == "test" or stage is None:
+            self.valid_data = self.raw_data[2]
 
     def train_dataloader(self) -> DataLoader:
         return self.create_dataloader(self.train_data, shuffle=True)
 
     def valid_dataloader(self) -> DataLoader:
-        return self.create_dataloader(self.valid_data)
+        return self.create_dataloader(self.valid_data, shuffle=False)
 
     def test_dataloader(self) -> DataLoader:
-        return self.create_dataloader(self.test_data)
+        return self.create_dataloader(self.test_data, shuffle=False)
 
-    def create_dataloader(self, data, shuffle=False) -> DataLoader:
-        dataset = SmilesDataset(data, self.tokenizer, max_length=self.max_seq_len)
+    def create_dataloader(self, data, shuffle) -> DataLoader:
+        dataset = TensorDataset(*self.tokenizer.encode(data, self.max_seq_len, padding=self.padding_smiles, truncation=self.truncation_smiles, return_tensors="pt"))
         return DataLoader(
             dataset,
             batch_size=self.batch_size,
             shuffle=shuffle,
             num_workers=self.num_workers,
-            collate_fn=collate_fn,
-            pin_memory=True,
+            persistent_workers=True,
         )
 
 
