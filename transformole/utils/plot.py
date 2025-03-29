@@ -9,7 +9,7 @@ import numpy as np
 from multiprocessing import Pool, cpu_count
 from PIL import Image
 
-def generate_molecule_images(csv_path: str, output_path: str = f'{OUTPUT_PATH}image') -> None:
+def generate_molecule_images(csv_path: str, output_path: str) -> None:
     """
     Generate molecule structure images from SMILES strings in a CSV file and save them in a grid format.
     Skip invalid molecules and print their IDs.
@@ -101,7 +101,7 @@ def write_fingerprint(args):
     else:
         return index, ''
 
-def calculate_similarity(source_csv_path: str, target_csv_path: str, output_path: str=f'{OUTPUT_PATH}similarity/') -> float:
+def calculate_similarity(source_csv_path: str, target_csv_path: str, output_path: str) -> float:
     source_data = pd.read_csv(source_csv_path)
     target_data = pd.read_csv(target_csv_path, header=None, names=['SMILES'])
 
@@ -183,9 +183,10 @@ def calculate_valid_smiles_ratio(csv_path: str) -> float:
 
     return valid_count / total_count if total_count > 0 else 0.0
 
-def calculate_atom_count_distribution(csv_path: str, output_path: str=f'{OUTPUT_PATH}atom_count') -> float:
+def calculate_atom_count_distribution(csv_path: str, output_path: str) -> float:
     """
     Calculate the atom count distribution of SMILES strings in a CSV file and generate a histogram.
+    :param output_path: The path to save the files.
     :param csv_path: The path to the CSV file containing SMILES strings.
     :return: None
     """
