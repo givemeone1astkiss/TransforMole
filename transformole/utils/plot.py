@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from multiprocessing import Pool, cpu_count
 from PIL import Image
+import umap
 
 def generate_molecule_images(csv_path: str, output_path: str) -> None:
     """
@@ -127,7 +128,11 @@ def calculate_similarity(source_csv_path: str, target_csv_path: str, output_path
     file_numbers = [int(f.split('_')[2].split('.')[0]) for f in existing_files if
                     f.startswith("similarity_histogram_") and f.endswith(".png")]
     largest_existing_number = max(file_numbers, default=-1)
-    plt.hist([s for s in max_similarities if not np.isnan(s)], bins=20, edgecolor='black')
+
+    valid_similarities = [s for s in max_similarities if not np.isnan(s)]
+    counts, bins = np.histogram(valid_similarities, bins=20, density=False)
+    counts = counts / counts.sum()
+    plt.hist(bins[:-1], bins, weights=counts, edgecolor='black')
     plt.xlabel('Maximum Similarity')
     plt.ylabel('Frequency')
     plt.title('Similarity Distribution')
@@ -212,3 +217,40 @@ def calculate_atom_count_distribution(csv_path: str, output_path: str) -> float:
 
     print("Average atom count:", np.mean(atom_counts) if atom_counts else 0.0)
     return np.mean(atom_counts) if atom_counts else 0.0
+
+def generate_umap(csv_path: str, output_path: str) -> None:
+    RDLogger.DisableLog('rdApp.*')
+    data = pd.read_csv(csv_path)
+    smiles = data['SMILES'].values
+
+    fingerprints = []
+    for s in smiles:
+        fp = generate_fingerprint(s)
+        if fp is not None:
+            fingerprints.append(fp)
+
+    # Convert fingerprints to numpy array
+    fps_array = [list(fp) for fp in fingerprints]
+
+    # Perform UMAP dimensionality reduction
+    reducer = umap.UMAP()
+    embedding = reducer.fit_transform(fps_array)
+
+    # Plot the UMAP results
+    plt.figure(figsize=(10, 8))
+    plt.scatter(embedding[:, 0], embedding[:, 1], s=5, cmap='Spectral')
+    plt.xlabel('UMAP1')
+    plt.ylabel('UMAP2')
+
+    # Create output directory if it doesn't exist
+    os.makedirs(output_path, exist_ok=True)
+
+    # Find the largest existing file number
+    existing_files = [f for f in os.listdir(output_path) if f.startswith("umap_") and f.endswith(".png")]
+    file_numbers = [int(f.split('_')[1].split('.')[0]) for f in existing_files]
+    largest_existing_number = max(file_numbers, default=-1)
+
+    # Save the plot
+    output_file = os.path.join(output_path, f'umap_{largest_existing_number + 1}.png')
+    plt.savefig(output_file)
+    plt.close()
