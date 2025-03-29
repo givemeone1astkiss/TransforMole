@@ -97,12 +97,12 @@ class SmilesDataModule(LightningDataModule):
 
     def __init__(
         self,
-        batch_size: int = 32,
+        batch_size: int = 256,
         max_seq_len: int = 100,
         num_workers: int = 4,
         augment: bool = True,
         raw_data: Tuple[list, list, list] = None,
-        load_vocab = False,
+        load_vocab = True,
         padding_smiles: bool = True,
         truncation_smiles: bool = False,
     ):
@@ -130,26 +130,34 @@ class SmilesDataModule(LightningDataModule):
         """
         # Load raw data
         if stage == "fit" or stage is None:
-            self.train_data = self.raw_data[0]
-            self.valid_data = self.raw_data[1]
+            self.train_data = TensorDataset(*self.tokenizer.encode(self.raw_data[0], self.max_seq_len, padding=self.padding_smiles, truncation=self.truncation_smiles, return_tensors="pt"))
+            self.valid_data = TensorDataset(*self.tokenizer.encode(self.raw_data[1], self.max_seq_len, padding=self.padding_smiles, truncation=self.truncation_smiles, return_tensors="pt"))
         if stage == "test" or stage is None:
-            self.valid_data = self.raw_data[2]
+            self.valid_data = TensorDataset(*self.tokenizer.encode(self.raw_data[2], self.max_seq_len, padding=self.padding_smiles, truncation=self.truncation_smiles, return_tensors="pt"))
 
     def train_dataloader(self) -> DataLoader:
-        return self.create_dataloader(self.train_data, shuffle=True)
+        return DataLoader(
+            self.train_data,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+            persistent_workers=True,
+        )
 
     def valid_dataloader(self) -> DataLoader:
-        return self.create_dataloader(self.valid_data, shuffle=False)
+        return DataLoader(
+            self.valid_data,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            persistent_workers=True,
+        )
 
     def test_dataloader(self) -> DataLoader:
-        return self.create_dataloader(self.test_data, shuffle=False)
-
-    def create_dataloader(self, data, shuffle) -> DataLoader:
-        dataset = TensorDataset(*self.tokenizer.encode(data, self.max_seq_len, padding=self.padding_smiles, truncation=self.truncation_smiles, return_tensors="pt"))
         return DataLoader(
-            dataset,
+            self.test_data,
             batch_size=self.batch_size,
-            shuffle=shuffle,
+            shuffle=False,
             num_workers=self.num_workers,
             persistent_workers=True,
         )
@@ -340,7 +348,7 @@ class SmilesTokenizer:
         if truncation:
             smiles_list = [smile[:max_length - 2] for smile in smiles_list]
         else:
-            smiles_list = [smile for smile in smiles_list if len(smile) <= max_length]
+            smiles_list = [smile for smile in smiles_list if len(smile) <= max_length-2]
 
         with Pool(cpu_count()) as pool:
             encoded = list(tqdm(pool.imap(
