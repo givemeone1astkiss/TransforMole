@@ -280,17 +280,23 @@ def generate_paired_molecule_images(smiles_path: str, output_path: str) -> None:
             invalid_ids.append(id_)
             print(f"Error processing molecule ID {id_}: {e}")
 
+    paired = set()
     pair_indices = []
     for i, fp1 in tqdm(enumerate(fingerprints), total=len(fingerprints), desc='Calculating similarities'):
+        if i in paired:
+            continue
         max_similarity = -1
         best_match = -1
         for j, fp2 in enumerate(fingerprints):
-            if i != j and not DataStructs.FingerprintSimilarity(fp1, fp2) == 1.0:
+            if i != j and j not in paired and not DataStructs.FingerprintSimilarity(fp1, fp2) == 1.0:
                 similarity = DataStructs.TanimotoSimilarity(fp1, fp2)
                 if similarity > max_similarity:
                     max_similarity = similarity
                     best_match = j
-        pair_indices.append((i, best_match))
+        if best_match != -1:
+            pair_indices.append((i, best_match))
+            paired.add(i)
+            paired.add(best_match)
 
     images = []
     for i, j in tqdm(pair_indices, desc='Generating images'):
