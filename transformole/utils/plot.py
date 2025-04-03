@@ -254,3 +254,72 @@ def generate_umap(csv_path: str, output_path: str) -> None:
     output_file = os.path.join(output_path, f'umap_{largest_existing_number + 1}.png')
     plt.savefig(output_file)
     plt.close()
+
+
+def generate_paired_molecule_images(smiles_path: str, output_path: str) -> None:
+    RDLogger.DisableLog('rdApp.*')
+    data = pd.read_csv(smiles_path)
+    ids = data['ID'].values
+    smiles = data['SMILES'].values
+
+    mols = []
+    fingerprints = []
+    valid_ids = []
+    invalid_ids = []
+
+    for id_, s in tqdm(zip(ids, smiles), total=len(smiles), desc='Generating fingerprints'):
+        try:
+            mol = Chem.MolFromSmiles(s)
+            if mol is not None:
+                mols.append(mol)
+                fingerprints.append(AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=2048))
+                valid_ids.append(id_)
+            else:
+                invalid_ids.append(id_)
+        except Exception as e:
+            invalid_ids.append(id_)
+            print(f"Error processing molecule ID {id_}: {e}")
+
+    pair_indices = []
+    for i, fp1 in tqdm(enumerate(fingerprints), total=len(fingerprints), desc='Calculating similarities'):
+        max_similarity = -1
+        best_match = -1
+        for j, fp2 in enumerate(fingerprints):
+            if i != j and not DataStructs.FingerprintSimilarity(fp1, fp2) == 1.0:
+                similarity = DataStructs.TanimotoSimilarity(fp1, fp2)
+                if similarity > max_similarity:
+                    max_similarity = similarity
+                    best_match = j
+        pair_indices.append((i, best_match))
+
+    images = []
+    for i, j in tqdm(pair_indices, desc='Generating images'):
+        img1 = Draw.MolToImage(mols[i], legend=f'ID: {valid_ids[i]}', size=(200, 200))
+        img2 = Draw.MolToImage(mols[j], legend=f'ID: {valid_ids[j]}', size=(200, 200))
+        images.append((img1, img2))
+
+    os.makedirs(output_path, exist_ok=True)
+    existing_folders = [f for f in os.listdir(output_path) if os.path.isdir(os.path.join(output_path, f)) and f.startswith("paired_images_")]
+    folder_numbers = [int(f.split('_')[2]) for f in existing_folders]
+    largest_existing_number = max(folder_numbers, default=-1)
+    new_folder_path = os.path.join(output_path, f'paired_images_{largest_existing_number + 1}')
+    os.makedirs(new_folder_path)
+
+    grid_size = 50
+    img_width, img_height = images[0][0].size
+    num_images = len(images)
+    num_grids = (num_images + grid_size - 1) // grid_size
+
+    for grid_index in range(num_grids):
+        grid_img = Image.new('RGB', (img_width * 2, img_height * grid_size))
+        for i in range(grid_size):
+            img_index = grid_index * grid_size + i
+            if img_index >= num_images:
+                break
+            img1, img2 = images[img_index]
+            grid_img.paste(img1, (0, i * img_height))
+            grid_img.paste(img2, (img_width, i * img_height))
+        grid_img.save(os.path.join(new_folder_path, f'paired_image_{grid_index}.png'))
+
+    if invalid_ids:
+        print("Invalid molecule IDs:", invalid_ids)
