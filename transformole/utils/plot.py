@@ -265,6 +265,7 @@ def generate_paired_molecule_images(smiles_path: str, output_path: str) -> None:
     mols = []
     fingerprints = []
     valid_ids = []
+    valid_smiles = []
     invalid_ids = []
 
     for id_, s in tqdm(zip(ids, smiles), total=len(smiles), desc='Generating fingerprints'):
@@ -274,6 +275,7 @@ def generate_paired_molecule_images(smiles_path: str, output_path: str) -> None:
                 mols.append(mol)
                 fingerprints.append(AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=2048))
                 valid_ids.append(id_)
+                valid_smiles.append(s)
             else:
                 invalid_ids.append(id_)
         except Exception as e:
@@ -299,16 +301,19 @@ def generate_paired_molecule_images(smiles_path: str, output_path: str) -> None:
             paired.add(best_match)
 
     images = []
+    paired_smiles = []
     for i, j in tqdm(pair_indices, desc='Generating images'):
         img1 = Draw.MolToImage(mols[i], legend=f'ID: {valid_ids[i]}', size=(200, 200))
         img2 = Draw.MolToImage(mols[j], legend=f'ID: {valid_ids[j]}', size=(200, 200))
         images.append((img1, img2))
+        paired_smiles.append((valid_smiles[i], valid_smiles[j]))
 
     os.makedirs(output_path, exist_ok=True)
     existing_folders = [f for f in os.listdir(output_path) if os.path.isdir(os.path.join(output_path, f)) and f.startswith("paired_images_")]
     folder_numbers = [int(f.split('_')[2]) for f in existing_folders]
     largest_existing_number = max(folder_numbers, default=-1)
-    new_folder_path = os.path.join(output_path, f'paired_images_{largest_existing_number + 1}')
+    new_folder_number = largest_existing_number + 1
+    new_folder_path = os.path.join(output_path, f'paired_images_{new_folder_number}')
     os.makedirs(new_folder_path)
 
     grid_size = 50
@@ -326,6 +331,9 @@ def generate_paired_molecule_images(smiles_path: str, output_path: str) -> None:
             grid_img.paste(img1, (0, i * img_height))
             grid_img.paste(img2, (img_width, i * img_height))
         grid_img.save(os.path.join(new_folder_path, f'paired_image_{grid_index}.png'))
+
+    paired_smiles_df = pd.DataFrame(paired_smiles, columns=['SMILES_0', 'SMILES_1'])
+    paired_smiles_df.to_csv(os.path.join(output_path, f'paired_smiles_{new_folder_number}.csv'), index=False)
 
     if invalid_ids:
         print("Invalid molecule IDs:", invalid_ids)
